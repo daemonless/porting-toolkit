@@ -1,0 +1,13 @@
+#!/bin/sh
+# git pre-push: refuse to push unless CIT has passed (.cit-passed marker written
+# by scripts/cit-with-logs.sh on success).
+# This is the agent-agnostic twin of an adapter's in-session CIT hook: it holds
+# no matter which agent — or human — drives the repo. Installed by install.sh.
+
+top=$(git rev-parse --show-toplevel)
+if [ ! -f "$top/.cit-passed" ]; then
+  echo "push blocked: no .cit-passed marker — CIT has not passed since the last change." >&2
+  echo "Run scripts/cit-with-logs.sh (build + runtime test must be green) first." >&2
+  exit 1
+fi
+exit 0

@@ -1,0 +1,8 @@
+# CIT / build / journal artifacts
+cit-output.log
+.cit-passed
+build.log
+JOURNAL.log
+
+# OS
+.DS_Store
