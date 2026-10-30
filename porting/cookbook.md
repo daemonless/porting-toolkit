@@ -327,6 +327,28 @@ is what makes its address usable as a nameserver. Under plain podman with
 published ports, the high-port route is the better answer and the image does not
 need root at all.
 
+### CI `lint` job fails: `Invalid category '<X>'. Valid: Base, Databases, ...`
+**Signature:** the build and CIT jobs go green, `scripts/lint-compose.sh` passes
+locally, and the `build / lint` job fails with
+`Invalid category 'Networking'. Valid: Base, Databases, Development, Downloaders,
+Infrastructure, Media Management, Media Servers, Monitoring, Network, Photos &
+Media, Productivity, Security, Utilities` — then `1 repo with errors`.
+**Cause:** `dbuild lint` (what CI runs) validates `x-daemonless.category`
+against a closed list. `scripts/lint-compose.sh` (the toolkit's linter) only
+cross-checks compose against the Containerfile LABEL, so two matching-but-invalid
+values pass locally and fail in CI. The plausible-but-wrong values are the trap:
+**`Networking` is invalid, it is `Network`**; likewise there is no `Apps`,
+`Tools` or `Media`.
+**Fix:** `dbuild lint` from the repo root **before pushing** — it reproduces the
+CI failure exactly and prints the current valid list. Then fix `compose.yaml` and
+re-run `dbuild generate`.
+**Why:** the two linters check disjoint things and neither supersedes the other.
+Run both. And template the label rather than hardcoding it —
+`io.daemonless.category="{{ category }}"` in the `.j2` — or fixing the category
+means fixing it twice and `lint-compose` will flag the drift in between.
+(Found on blocky 2026-10-31: first CI run on `main` went red on exactly this
+while every local gate was green.)
+
 ### Porting an image off s6: `base` → `base-exec`
 **Cause:** the project is moving away from s6 (maintainer, 2026-10-31). `base`
 still works, but new single-process images should use `base-exec`, whose layout

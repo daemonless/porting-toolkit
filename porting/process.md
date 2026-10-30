@@ -167,7 +167,75 @@ If one error resists 2 attempts, hand it to a fresh context with [`prompts/port-
 - Keep build-only toolchains in the builder stage; discard from runtime.
 - **Use standard patches where possible:** prefer `.patch` files with `patch -p1 --fuzz=0` over custom scripts. Reserve scripts for programmatic transformations. `--fuzz=0` is the drift guard (fails on context mismatch).
 - **Two easy-to-miss shipped files** (see [`shipped-files.md`](shipped-files.md)): `.github/workflows/build.yaml` (from `dbuild init` — gone if you scaffolded by copying a sibling; it is a thin caller of `daemonless/dbuild`'s reusable workflow, only `image_name` differs) and `LICENSE` (the image repo's own BSD-2-Clause, not upstream's). **`sbom.json` is NOT yours to add** — CI generates and commits it after the first build on `main`.
-- **Catalog screenshots (easy to forget — do it every image):** `dbuild screenshot <upstream image URL>...` downloads the app's screenshots from its README/repo into `.daemonless/screenshots/` for the daemonless catalog. Find them in the upstream README (often a `.github/`, `assets/`, or `docs/` path). (Distinct from `dbuild baseline`, which captures the CIT *comparison* shot for screenshot-mode tests.)
+### Catalogue checklist — run this before every PR
+
+Every item below is something a maintainer has actually had to ask for in review
+on a daemonless image PR. None of it affects whether the image *works*, all of
+it affects whether the catalogue displays the port properly, and none of it is
+caught by `scripts/lint-compose.sh`.
+
+**`dbuild lint` is the authoritative check and CI runs it — run it yourself
+first.** It is NOT the same tool as `scripts/lint-compose.sh`, and it catches
+things that one misses entirely. A clean `lint-compose` plus a dirty
+`dbuild lint` is a red CI run.
+
+- [ ] **`dbuild lint` passes.** Run it from the repo root; fix everything it
+      reports before pushing.
+- [ ] **`category:` is one of the ALLOWED values.** `dbuild lint` enforces a
+      fixed list and rejects anything else — `Networking` is **not** valid, the
+      value is `Network`. As of 2026-10-31 the list is: `Base`, `Databases`,
+      `Development`, `Downloaders`, `Infrastructure`, `Media Management`,
+      `Media Servers`, `Monitoring`, `Network`, `Photos & Media`, `Productivity`,
+      `Security`, `Utilities`. `dbuild lint` prints the current list when it
+      rejects one, so read its error rather than trusting this list.
+      **Template the label — `io.daemonless.category="{{ category }}"` in the
+      `.j2`, not a hardcoded string** — otherwise `compose.yaml` and the
+      Containerfile LABEL drift and `lint-compose` flags a mismatch you then have
+      to fix twice.
+- [ ] **A logo.** `dbuild logo <url>` → `.daemonless/logo.svg`. Preferred source
+      is **<https://dashboardicons.com/>** ("has icons for almost every tool"),
+      i.e.
+      `https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/<app>.svg`
+      (`selfhst/icons` also works). Prefer that over the app's own repo logo:
+      the dashboard icons are square, optimised and consistent across the
+      catalogue — blocky's upstream SVG was an 80 KB Inkscape export against a
+      14 KB dashboard icon. Square (1:1) and under 150 KB.
+      **This is the single most-requested missing item in review.**
+- [ ] **`community:`** — set it, and set it to the **daemonless** Discord, not
+      the app's own: `community: "Discord:https://discord.gg/Kb9tkhecZT"`. It is
+      also `dbuild`'s `DEFAULT_COMMUNITY`. The question was settled in review:
+      community means "where you get help with THIS image", and a downstream
+      clone can point it at their own. Do not drop it as unverified scaffolding.
+- [ ] **Catalogue screenshots.** `dbuild screenshot <upstream image URL>...`
+      downloads the app's screenshots from its README/repo into
+      `.daemonless/screenshots/`. Find them in the upstream README (often a
+      `.github/`, `assets/`, or `docs/` path). For an app with no UI, upstream's
+      own illustrative images (e.g. its Grafana dashboards) are the honest best
+      available. **Distinct from `dbuild baseline`.**
+- [ ] **`baseline-latest.png` IF AND ONLY IF `cit.mode: screenshot`.** Review
+      catches both directions: a screenshot-mode config with no baseline
+      ("either change back to health or add an image to compare against"), and a
+      committed baseline that is really just the logo letterboxed, which makes a
+      broken build match forever. `health` mode → no baseline file.
+- [ ] **`x-daemonless: class:`** set explicitly (`service` / `cli` / `base`).
+- [ ] **`/app/version` is written** so dbuild can detect and tag the version.
+      For a pkg image: `pkg query '%v' ${PKG_NAME} > /app/version` plus
+      `io.daemonless.pkg-name`. **Do not hard-pin a version** and do not add an
+      expected-version assertion that fails the build on drift — the image then
+      "shows permanently outdated and never auto-updates on rebuild".
+- [ ] **Registry is `ghcr.io/daemonless`, not your fork.** The recurring one:
+      `dbuild generate` derives it from the remote, so running it from a fork
+      rewrites `README.md` and the Containerfile with fork URLs. Run
+      `DBUILD_REGISTRY=ghcr.io/daemonless dbuild generate` and grep the result:
+      `grep -rhoE 'ghcr\.io/[a-z0-9.-]+/' README.md Containerfile compose.yaml`
+      should print only `ghcr.io/daemonless/`.
+- [ ] **Re-run `dbuild generate` after ANY `compose.yaml` edit** — `README.md` is
+      generated from it, so a metadata fix that skips this leaves the old value
+      in the README footer. Caught in review more than once.
+- [ ] **`upstream_url:`** holds the **real upstream** repo (not
+      `daemonless/<image>`); `org.opencontainers.image.source` carries the
+      daemonless URL. `lint-compose.sh` emits an INFO saying the opposite — it is
+      wrong, and every sibling trips it.
 
 ## Phase 6 — Audit gate, then PR (then STOP)
 - `dbuild generate`; restore `README.md` if needed.
@@ -204,4 +272,4 @@ If you hit a blocker you can't resolve, or the session is ending before the port
 The next session's Phase 0 will pick up from `WIP.md`.
 
 ## Definition of done
-`scripts/build.sh` PASSED + `scripts/cit-with-logs.sh` PASSED (real CIT **and** smoke test — boot alone is not function) AND patch-rot + drift guards in place AND `dbuild screenshot` run (catalog screenshots in `.daemonless/screenshots/`) AND `BUILD-NOTES.md` written AND `PROCESS-LOG.md` filled in AND `RUN-RECORD.md` filled in AND `scripts/lint-compose.sh` passes (including its pristine-repo check — see [`shipped-files.md`](shipped-files.md)) AND `port-auditor` returned CLEAN AND correctness-review findings fixed or dismissed-with-reason AND the evidence a human needs to write the PR description themselves (BUILD-NOTES, PROCESS-LOG, logs, audit verdict). Append any new gotcha to the cookbook.
+`scripts/build.sh` PASSED + `scripts/cit-with-logs.sh` PASSED (real CIT **and** smoke test — boot alone is not function) AND patch-rot + drift guards in place AND `dbuild screenshot` run (catalog screenshots in `.daemonless/screenshots/`) AND `BUILD-NOTES.md` written AND `PROCESS-LOG.md` filled in AND `RUN-RECORD.md` filled in AND `scripts/lint-compose.sh` passes (including its pristine-repo check — see [`shipped-files.md`](shipped-files.md)) AND **`dbuild lint` passes** AND the Phase 5 **catalogue checklist** is complete (logo, community, category, screenshots, registry) AND `port-auditor` returned CLEAN AND correctness-review findings fixed or dismissed-with-reason AND the evidence a human needs to write the PR description themselves (BUILD-NOTES, PROCESS-LOG, logs, audit verdict). Append any new gotcha to the cookbook.
