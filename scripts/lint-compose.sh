@@ -56,16 +56,35 @@ expose_port=$(grep '^EXPOSE' "$CONTAINERFILE" | awk '{print $2}')
 compose_port=$(grep -E '^\s+- [0-9]+:[0-9]+' "$COMPOSE" | head -1 | sed 's/.*- \([0-9]*\):.*/\1/')
 compose_category=$(grep 'category:' "$COMPOSE" | head -1 | sed 's/.*category: *"\(.*\)"/\1/')
 compose_title=$(grep 'title:' "$COMPOSE" | head -1 | sed 's/.*title: *"\(.*\)"/\1/')
-compose_volumes_doc=$(grep -A1 'volumes:' "$COMPOSE" | grep '/' | head -1 | sed 's/.*\(\/[^:]*\).*/\1/')
+# Anchor to the START of the line, not the last slash on it. The previous
+# `sed 's/.*\(\/[^:]*\).*/\1/'` was greedy, so a description containing any
+# further slash ("read-only", a URL) made it report a path that isn't one —
+# with no error message pointing at the cause. (Found on blocky 2026-10-31.)
+compose_volumes_doc=$(grep -A2 'volumes:' "$COMPOSE" \
+                      | sed -n 's|^[[:space:]]*\(/[^:]*\):[[:space:]]*".*|\1|p' | head -1)
 compose_upstream=$(grep 'upstream_url:' "$COMPOSE" | sed 's/.*upstream_url: *"\(.*\)"/\1/')
 compose_freshports=$(grep 'freshports_url:' "$COMPOSE" | sed 's/.*freshports_url: *"\(.*\)"/\1/')
 
-# Cross-check port
-if [ -n "$label_port" ] && [ -n "$compose_port" ] && [ "$label_port" != "$compose_port" ]; then
-  warn "port: Containerfile LABEL=$label_port vs compose.yaml=$compose_port"
+# Cross-check port.
+# These compare the declared primary port against the SET of ports the image
+# exposes/publishes, not against a single value. The old equality test assumed
+# one port per image, so anything with a service port plus an API port (a DNS
+# resolver, a mail server) reported mismatches that were not mismatches.
+# (Found on blocky 2026-10-31, which exposes 53/udp, 53/tcp and 4000.)
+compose_ports_all=$(grep -oE '^[[:space:]]*- "?[0-9]+:[0-9]+' "$COMPOSE" 2>/dev/null \
+                    | grep -oE '[0-9]+:' | tr -d ':' | sort -u)
+expose_ports_all=$(grep '^EXPOSE' "$CONTAINERFILE" 2>/dev/null \
+                   | sed 's/^EXPOSE//' | tr ' ' '\n' | grep -oE '^[0-9]+' | sort -u)
+
+if [ -n "$label_port" ] && [ -n "$compose_ports_all" ]; then
+  if ! echo "$compose_ports_all" | grep -qxF "$label_port"; then
+    warn "port: Containerfile LABEL=$label_port is not among compose.yaml's published ports ($(echo "$compose_ports_all" | tr '\n' ' '))"
+  fi
 fi
-if [ -n "$expose_port" ] && [ -n "$label_port" ] && [ "$expose_port" != "$label_port" ]; then
-  warn "port: EXPOSE=$expose_port vs LABEL=$label_port"
+if [ -n "$label_port" ] && [ -n "$expose_ports_all" ]; then
+  if ! echo "$expose_ports_all" | grep -qxF "$label_port"; then
+    warn "port: Containerfile LABEL=$label_port is not among EXPOSE's ports ($(echo "$expose_ports_all" | tr '\n' ' '))"
+  fi
 fi
 
 # Cross-check category

@@ -67,9 +67,17 @@ else
   echo "[cit] WARNING: could not find CIT container — logs not captured"
 fi
 
-# Wait for dbuild test to finish
-wait "$DBUILD_PID"
-RESULT=$?
+# Wait for dbuild test to finish.
+# Same `set -e` trap as the smoke call further down: a bare `wait` that returns
+# non-zero terminates the script, so `RESULT=$?` never runs and the "CIT FAILED
+# — full logs in cit-output.log" branch below was unreachable dead code. Nobody
+# noticed because CIT has passed on every image it was handed. Keep this in a
+# condition. (Pre-existing; found 2026-10-31 alongside the smoke-capture bug.)
+if wait "$DBUILD_PID"; then
+  RESULT=0
+else
+  RESULT=$?
+fi
 
 echo ""
 cat "${LOG_FILE}.dbuild"
@@ -90,7 +98,39 @@ if [ "$RESULT" -eq 0 ]; then
   # .cit-passed (which gates git push / PR) is only written once BOTH are green.
   if [ -x scripts/smoke-test.sh ]; then
     echo "[cit] Running functional probe (scripts/smoke-test.sh)..."
-    if scripts/smoke-test.sh; then
+    # Retain the probe's output for the same reason the dbuild stdout above is
+    # retained, and it was missed here: BUILD-NOTES and PROCESS-LOG are supposed
+    # to quote a real transcript, and with the probe's stdout discarded a
+    # reviewer has to take the functional gate on trust. The 2026-09-28 fix
+    # eight lines up solved this for `dbuild test` only. (Found 2026-10-31 by
+    # the port-auditor on blocky; reported as a toolkit defect.)
+    # NOT `smoke-test.sh | tee -a`: this is /bin/sh, there is no PIPESTATUS, and
+    # a pipeline's status is the LAST command's — so tee would always succeed and
+    # the gate would pass unconditionally. Capture to a temp file, then keep the
+    # probe's real exit status.
+    # The probe call MUST stay inside a condition. This script runs under
+    # `set -e` (line 10), where a bare failing simple command terminates the
+    # shell immediately — so `cmd; RESULT=$?` never reaches the assignment, the
+    # append below never runs, and a FAILING smoke test produces a bare non-zero
+    # exit with no transcript and no diagnostic. That is the exact case this
+    # capture was added for, so getting it wrong defeats the whole fix.
+    # `set -e` is disarmed inside an if/while condition, which is why the
+    # original `if scripts/smoke-test.sh; then` was safe.
+    SMOKE_OUT="${LOG_FILE}.smoke"
+    if scripts/smoke-test.sh >"$SMOKE_OUT" 2>&1; then
+      SMOKE_RESULT=0
+    else
+      SMOKE_RESULT=$?
+    fi
+    # Unconditionally, before the verdict: print and retain on BOTH paths.
+    cat "$SMOKE_OUT"
+    {
+      echo ""
+      echo "===== smoke-test.sh output ($(date -u '+%Y-%m-%dT%H:%M:%SZ')) ====="
+      cat "$SMOKE_OUT"
+    } >> "$LOG_FILE" 2>/dev/null || true
+    rm -f "$SMOKE_OUT"
+    if [ "$SMOKE_RESULT" -eq 0 ]; then
       echo "[cit] SMOKE PASSED"
     else
       echo "[cit] SMOKE FAILED — the image boots but does not do its job. No marker written." >&2

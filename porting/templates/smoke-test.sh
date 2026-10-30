@@ -23,9 +23,18 @@ if [ "$(id -u)" -ne 0 ]; then
   elif command -v sudo >/dev/null 2>&1; then PODMAN="sudo podman"; fi
 fi
 
-cleanup() { $PODMAN rm -f "$NAME" >/dev/null 2>&1; }
+# Two separate jobs, deliberately not one function. Clearing a stale container
+# must happen BEFORE the probe sets anything up; removing temp state must happen
+# only on exit. If you add a `mktemp -d` to cleanup() — as any probe needing a
+# mounted config file does — and it is also called up front, it deletes the
+# directory you are about to write into. Cost a failed run on blocky 2026-10-31.
+rm_stale_container() { $PODMAN rm -f "$NAME" >/dev/null 2>&1; }
+cleanup() {
+  rm_stale_container
+  # rm -rf "$WORKDIR"   # uncomment if you add temp state
+}
 trap cleanup EXIT INT TERM
-cleanup
+rm_stale_container
 
 echo "[smoke] starting $IMAGE as $NAME"
 $PODMAN run --rm -d --name "$NAME" \

@@ -248,5 +248,93 @@ cit:
 
 ---
 
-## Go (stub — fill in as you port)
+## Go
 - Mostly static; watch cgo deps needing system libs.
+- **A Go app in FreeBSD ports is the cheapest port there is.** Check `pkg rquery '%o|%n|%v' <app>`
+  before planning anything: a CGO-free Go binary packaged in ports means no
+  builder stage, no toolchain, no source, no native-module hazards — the same
+  two-line `pkg install` shape as `ffmpeg`. Verified on blocky (2026-10-31):
+  `dns/blocky`, zero runtime deps (`pkg rquery '%dn-%dv'` empty), one `FROM`.
+
+### A hand-written config template goes stale silently — validate it at build time
+**Signature:** none at build time. At runtime, a container that restarts forever,
+or worse, one that starts against a config the app partially ignored.
+**Cause:** images that ship a default/sample config have a hand-written file that
+nothing checks. The app's config schema changes on a version bump and the
+template is now wrong, but no build step reads it.
+**Fix:** run the app's own config validator against the template in the build,
+and make it a copy so you never write into a volume mount point:
+```dockerfile
+RUN test -f /usr/local/share/<app>/config.yml.default \
+    && cp /usr/local/share/<app>/config.yml.default /tmp/config-check.yml \
+    && <app> validate --config /tmp/config-check.yml \
+    && rm /tmp/config-check.yml
+```
+**Why:** it converts a runtime crash into a build failure, and it is the only
+thing that notices the template drifted. Caught a real error first time out on
+blocky (see the next entry). If the app has no validator subcommand, the
+fallback is a start-with-timeout smoke step — weaker, but not nothing.
+
+### `blocky validate` fails with `configuration path does not exist` even though `BLOCKY_CONFIG_FILE` is set
+**Cause:** `validate`'s `RunE` calls `os.Stat(configPath)` **before** `initConfig()`,
+and `initConfig` is the only place the env var is read (`cmd/validate.go`,
+`cmd/root.go` at v0.35.0). The root command's `PreRunE` is **not persistent**, so
+subcommands don't inherit it. With only the env var set, `validate` stats the
+flag default `./config.yml` and misses.
+**Fix:** pass the flag explicitly — `blocky validate --config /path/to/config.yml`.
+**Why:** and note the inverse, which is the sharper edge: because the env var is
+only consulted while `--config` is at its default, **passing `--config` to the
+serve command silently disables `BLOCKY_CONFIG_FILE`**. Pick one mechanism per
+call site and comment it, or a later edit will quietly break the documented
+override. (Generalises to any cobra app that resolves an env-var fallback inside
+a config loader rather than in flag binding.)
+
+### blocky config: `field loading not found in type config.Config`
+**Cause:** `loading:` is **not** a top-level key. It is nested under `blocking:`
+(and separately under `filtering:`). Same trap for anything else that looks
+global in the docs — read `docs/config.yml` at the **pinned tag** for the nesting,
+not the prose in `configuration.md`.
+**Fix:** indent it under `blocking:`. Also `blockType: zeroIp` — lowercase `p`;
+`zeroIP` is rejected.
+**Why:** blocky unmarshals strictly (`additional properties 'loading' not allowed`),
+so a misplaced key is a hard failure rather than a silently ignored one — which is
+the good outcome, provided something runs the validator. See the entry above.
+
+### An image whose app binds a privileged port (<1024) on FreeBSD must run as root
+**Cause:** FreeBSD reserves ports below 1024 to root and has **no capability
+mechanism** to delegate a single port. Linux images solve this with
+`cap_net_bind_service` (`setcap`, or `docker run --cap-add NET_BIND_SERVICE`);
+there is no FreeBSD equivalent, so the usual `exec s6-setuidgid bsd <binary>`
+tail cannot be used.
+**Fix:** omit the `USER` directive, drop `s6-setuidgid` from the run script, and
+set `user: "root"` in `compose.yaml`'s `x-daemonless` block. Document why at the
+call site — it reads like an oversight otherwise, and it is the one thing a
+reviewer will stop on.
+**Why:** there are three alternatives, not two, and you should reject all three
+explicitly or a reviewer will think you rejected straw men:
+`net.inet.ip.portrange.reservedlow=0` is a per-jail sysctl that unreserves
+*every* low port in the jail; `mac_portacl` needs a kernel module loaded on the
+**host** plus a policy keyed to a uid inside the container, which is host state
+an image cannot carry — it breaks the property that the image is self-contained.
+**The third is the one that actually works and is upstream's own suggestion:
+run on a high port** (e.g. `5353`) as the unprivileged user and publish
+`53:5353/udp` on the host — no capability, no sysctl, no kernel module, no host
+state. Reject it only if you can say why. On blocky the reason is `appjail:
+true`: the container gets its OWN address, so users point a resolver straight at
+it on :53 and there is no host port to map — binding :53 *inside* the container
+is what makes its address usable as a nameserver. Under plain podman with
+published ports, the high-port route is the better answer and the image does not
+need root at all.
+
+### `dbuild init`'s scaffold is cloudflared-flavoured — delete it, don't edit it
+**Cause:** the generated `root/etc/services.d/<app>/run` and `root/healthz` branch
+on `TUNNEL_TOKEN` and fall back to a "CIT mock mode" that runs
+`nc -lk 0.0.0.0 <port>`; the generated `Containerfile.j2` carries
+`DOWNLOAD_URL=https://example.com/...`, `licenses="UNKNOWN"`, a guessed
+`web_url`, and a `freshports_url` with a guessed category path.
+**Fix:** treat all of it as placeholder. Replace the run script and healthz
+outright rather than editing around the token check.
+**Why:** the mock mode is the dangerous part. Left in place it satisfies CIT's
+port check with a netcat listener instead of the application, so CIT passes
+forever while the image is broken — the same anti-pattern as a baseline
+screenshot of an error dialog.
