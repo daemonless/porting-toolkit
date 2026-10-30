@@ -304,10 +304,11 @@ the good outcome, provided something runs the validator. See the entry above.
 **Cause:** FreeBSD reserves ports below 1024 to root and has **no capability
 mechanism** to delegate a single port. Linux images solve this with
 `cap_net_bind_service` (`setcap`, or `docker run --cap-add NET_BIND_SERVICE`);
-there is no FreeBSD equivalent, so the usual `exec s6-setuidgid bsd <binary>`
-tail cannot be used.
-**Fix:** omit the `USER` directive, drop `s6-setuidgid` from the run script, and
-set `user: "root"` in `compose.yaml`'s `x-daemonless` block. Document why at the
+there is no FreeBSD equivalent.
+**Fix:** on **base-exec**, set `ENV DAEMONLESS_USER=root` — `/init` otherwise
+drops to `bsd` via `dsu`. On legacy **base** (s6), omit `USER` and drop the
+`exec s6-setuidgid bsd` tail from the run script. Either way set
+`user: "root"` in `compose.yaml`'s `x-daemonless` block. Document why at the
 call site — it reads like an oversight otherwise, and it is the one thing a
 reviewer will stop on.
 **Why:** there are three alternatives, not two, and you should reject all three
@@ -325,6 +326,36 @@ it on :53 and there is no host port to map — binding :53 *inside* the containe
 is what makes its address usable as a nameserver. Under plain podman with
 published ports, the high-port route is the better answer and the image does not
 need root at all.
+
+### Porting an image off s6: `base` → `base-exec`
+**Cause:** the project is moving away from s6 (maintainer, 2026-10-31). `base`
+still works, but new single-process images should use `base-exec`, whose layout
+is NOT the s6 layout — `/etc/services.d` and `/etc/cont-init.d` simply do not
+exist there, and writing to them is silently ignored.
+**Fix:** the four-part move, verified on blocky:
+```
+FROM ghcr.io/daemonless/base-exec:15          # was base:15
+root/etc/services.d/<app>/run   →  CMD ["<app>"]            in the Containerfile
+root/etc/cont-init.d/NN-foo     →  root/daemonless/custom.d/NN-foo
+(stay root?)                    →  ENV DAEMONLESS_USER=root
+```
+`root/healthz` is unchanged and still overrides the base's generic one.
+**Why, and the two traps:**
+1. **No supervisor.** `/init` runs `init.d/*`, then `custom.d/*`, then **execs
+   `CMD`** — the app replaces `/init`, gets the runtime's signals, and its exit
+   is the container's. Restart is the runtime's job, so set
+   `restart: unless-stopped` in `compose.yaml`. If you actually need in-container
+   supervision of 2+ services, that is `base-rcd` (`rcd(8)` units in
+   `/usr/local/etc/rcd.d`), not `base-exec`.
+2. **`init.d` runs entirely before `custom.d`**, and `init.d/10-usermod` chowns
+   `/config` to PUID:PGID. So any file your `custom.d` script CREATES under
+   `/config` stays root-owned, and CIT fails with
+   `ownership (PUID=1000): paths under /config not owned by 1000:1000`. Chown it
+   yourself (`chown bsd:bsd "$f"` — `bsd` is already remapped to PUID:PGID),
+   guarded by `[ "$(id -u)" = 0 ]` so a `--user` run skips it. Under s6 both
+   scripts shared `/etc/cont-init.d` and the seed merely sorted before
+   `10-usermod`, so this worked by accident and the accident does not survive
+   the move.
 
 ### `dbuild init`'s scaffold is cloudflared-flavoured — delete it, don't edit it
 **Cause:** the generated `root/etc/services.d/<app>/run` and `root/healthz` branch

@@ -31,7 +31,8 @@ upstream feature requests>.
 
 ## Crib (mandatory — do not tour the registry)
 - **Copy from `<nearest twin image>`:** `Containerfile.j2` structure,
-  `root/etc/services.d/<app>/run`, `.daemonless/config.yaml` shape.
+  `root/daemonless/custom.d/*` (base-exec) or `root/etc/services.d/<app>/run`
+  (legacy s6 base), `.daemonless/config.yaml` shape.
 - <one line on what differs from the twin and must NOT be copied>.
 
 ## Functional probe (mandatory — proves it WORKS, not just boots)
@@ -43,7 +44,9 @@ upstream feature requests>.
   error">.
 
 ## Decisions already made
-- **Base image:** <base vs base-core, tag, per the process's ABI rule>.
+- **Base image:** <base-exec (one process) / base-rcd (several) / base-core
+  (CLI); NOT `base` unless matching an existing image. Tag per the ABI rule>.
+- **Stays root?** <yes + why, e.g. binds a port <1024 → `ENV DAEMONLESS_USER=root`; else no>.
 - **CIT mode:** <health/port/command + `cit.ready:` line if the app's startup
   log matches no default pattern>.
 - <any other pre-made call: volumes, user, ports>.

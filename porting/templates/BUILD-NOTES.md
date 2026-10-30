@@ -5,7 +5,7 @@
 | **Upstream** | `<owner/repo>` @ `<tag>` (<license>) |
 | **Runtime** | `<node26 + temporal-polyfill / go / python3.11>` |
 | **Database** | `<node:sqlite via sqlite-proxy / better-sqlite3 / stdlib sqlite3 / none>` |
-| **Base** | `ghcr.io/daemonless/base:<tag>` (service) **or** `base-core:<tag>` (CLI / non-daemon) — use lowest supported minor, e.g. `15-pkg` |
+| **Base** | `base-exec:<tag>` (one process) / `base-rcd:<tag>` (several) / `base-core:<tag>` (CLI) — `base` (s6) is legacy. Use the lowest supported minor, e.g. `15` |
 
 ## FreeBSD-specific changes (and WHY)
 <!-- one line each; link the cookbook entry it came from -->

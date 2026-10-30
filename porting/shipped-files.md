@@ -20,7 +20,7 @@ Derived from the tracked contents of 16 daemonless image repos (2026-09-28):
 | `sbom.json` | 16/16 | **generated and committed by CI** (`github-actions[bot]`, "Update sbom.json and generated files [skip ci]"), after the first build on `main`. **Do not hand-add it to a PR** — it will not exist in a new image repo until CI has run once. `dbuild sbom` exists for local inspection, writes to `sbom-results/`, and produces a different (single-variant) shape than the committed aggregate |
 | `Containerfile` + `Containerfile.j2` | 16/16 | you write the `.j2`; `dbuild generate` writes the rest. Some repos ship `Containerfile.pkg` + `.pkg.j2` instead of, or as well as, the plain pair |
 | `compose.yaml` | 15/16 | you write it. **Service class only** — a `cli`-class image ships none (`immich-cli`); see the cookbook's `x-daemonless: class:` entry |
-| `root/` | 15/16 | you write it: `etc/services.d/<app>/run`, `etc/cont-init.d/*`, `healthz`. CLI images have none |
+| `root/` | 15/16 | you write it. On **base-exec**: `daemonless/custom.d/<NN>-name` for setup, `healthz`; the app is `CMD`, not a run script. On legacy **base** (s6): `etc/services.d/<app>/run`, `etc/cont-init.d/*`, `healthz`. CLI images have none |
 | `LICENSE` | 12/16 | you add it — the **image repo's** licence (BSD-2-Clause, matching the org), not upstream's |
 | `patches/` | 3/16 | only when the port patches or shims upstream source |
 | app-specific config | rare | e.g. `example.env`, `postgres-template.conf` — only when the app genuinely needs a shipped sample |
@@ -51,10 +51,12 @@ a repo that already tracked a colliding path.
 
 Then it isn't a porting script, and it doesn't go in `scripts/`:
 
-- **Runs in the container at runtime** → `root/`. That is what `root/` is for:
-  `root/etc/services.d/<app>/run` for the service itself, `root/etc/cont-init.d/`
-  for one-shot setup, `root/healthz` for an external health probe (and set
-  `io.daemonless.healthcheck-url` so something can find it).
+- **Runs in the container at runtime** → `root/`. That is what `root/` is for.
+  On **base-exec**: `root/daemonless/custom.d/<NN>-name` for one-shot setup, and
+  the service itself is the Containerfile's `CMD` (no run script). On legacy
+  **base** (s6): `root/etc/services.d/<app>/run` and `root/etc/cont-init.d/`.
+  Either way `root/healthz` is the external health probe — set
+  `io.daemonless.healthcheck-url` so something can find it.
 - **Runs during the build** → inline it in `Containerfile.j2` as a `RUN`, or put
   it in `patches/` if it is a source transformation. A build step that only
   exists in a file the image doesn't copy is a build step that will silently

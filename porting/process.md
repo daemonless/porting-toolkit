@@ -88,11 +88,56 @@ Get a written **port plan** before touching a Containerfile. Must answer:
 - Build system (pnpm/npm/yarn, vite/esbuild, monorepo workspaces).
 - **Native modules** — the decisive question. List every dep with prebuilt platform binaries (`@libsql/*`, `better-sqlite3`, `sharp`, `@napi-rs/*`, `@img/*`, …). For each: does a FreeBSD prebuilt exist? Does it build from source on FreeBSD? (See cookbook — this is 80% of the work.)
 - Database driver + whether it works on FreeBSD (libsql does NOT).
-- **Base image shape** — long-running **service** or **one-shot CLI / non-daemon tool**? Service → `ghcr.io/daemonless/base:<tag>` (s6-supervised). CLI/tool → `ghcr.io/daemonless/base-core:<tag>` (minimal, **no** service supervision; lighter, still ships `pkg`). Tells it's a CLI: no listening port, no health endpoint, runs-and-exits, upstream ships a `bin`/command not a server. On a minimal base, add `ca_root_nss` if the build fetches over HTTPS (npm/pip/curl).
-- **Base tag — `base` and `base-core` do NOT share a tag scheme.** Verify before you write a tag into a Containerfile: `skopeo list-tags docker://ghcr.io/daemonless/base` (same for `base-core`). As of 2026-09:
-  - `base`: `15`, `15.1`, `15-quarterly`, `15-latest`, `15.1-latest` (plus `-amd64`/`-aarch64`). **There is no `base:15-pkg`** — it 404s with `manifest unknown`.
-  - `base-core`: `15-pkg`, `15-pkg-latest`, `15.1-pkg`, … — on *this* repo the `-pkg` suffix is the correct form.
-  - The `-quarterly` / `-latest` suffix selects the **pkg branch** baked in, not the FreeBSD minor. If your runtime only exists in the latest branch, a `…-latest` tag can save you the in-Containerfile `sed` (see the node cookbook entry).
+- **Base image shape — pick by PROCESS COUNT, and do not reach for `base`.**
+  **The project is moving away from s6** (confirmed by a maintainer 2026-10-31).
+  `base` still works and most existing images are on it, but new ports should not
+  use it:
+  - **ONE long-running process → `ghcr.io/daemonless/base-exec:<tag>`.** `/init`
+    runs `/daemonless/init.d/*` then `/daemonless/custom.d/*`, then **execs
+    `CMD`**. No supervisor: the app replaces `/init`, receives the runtime's
+    signals, and its exit is the container's — so podman/AppJail/Kubernetes
+    restart it via the restart policy (set `restart: unless-stopped` in
+    `compose.yaml`). This is the right default for a single daemon.
+  - **TWO OR MORE services in one container → `ghcr.io/daemonless/base-rcd:<tag>`**,
+    supervised by `rcd(8)` units in `/usr/local/etc/rcd.d`.
+  - **One-shot CLI / non-daemon tool → `ghcr.io/daemonless/base-core:<tag>`**
+    (minimal, no supervision, still ships `pkg`). Tells it's a CLI: no listening
+    port, no health endpoint, runs-and-exits, upstream ships a `bin`/command
+    rather than a server.
+  - **`base` (s6) — legacy.** Only to match an existing image you are editing.
+
+  On any of these, add `ca_root_nss` if the build or the app fetches over HTTPS.
+
+- **`base-exec` layout — it is NOT the s6 layout.** There is no
+  `/etc/services.d` and no `/etc/cont-init.d`; writing to them is silently
+  ignored.
+  - setup scripts → **`root/daemonless/custom.d/<NN>-name`** (executable)
+  - the app → **`CMD`** in the Containerfile, not a `run` script
+  - `root/healthz` still works and overrides the base's generic one
+  - `/init` drops to `${DAEMONLESS_USER:-bsd}` via `dsu`; **set
+    `ENV DAEMONLESS_USER=root` for an image that must stay root** (e.g. binding
+    a port <1024 — see the privileged-port cookbook entry).
+  - ⚠ **`init.d` runs entirely before `custom.d`**, and the base's
+    `init.d/10-usermod` chowns `/config` to PUID:PGID. So anything your
+    `custom.d` script CREATES under `/config` stays root-owned and **fails
+    CIT's ownership check** — chown it yourself. Under s6 both lived in
+    `/etc/cont-init.d` and ordering was a lexicographic accident that happened
+    to work. (Hit on blocky 2026-10-31.)
+
+- **Base tag — the four base repos do NOT share one tag scheme.** Verify before
+  writing a tag into a Containerfile: `skopeo list-tags docker://ghcr.io/daemonless/<repo>`.
+  As of 2026-10-31:
+  - `base-exec` / `base-rcd`: `15`, `15.1`, `15-quarterly`, `15-latest`,
+    `15.1-latest`, `pkg`, `pkg-latest`, `latest`. Both plain `15` **and** `pkg`
+    resolve here.
+  - `base`: `15`, `15.1`, `15-quarterly`, `15-latest`, `15.1-latest`. **There is
+    no `base:15-pkg`** — it 404s with `manifest unknown`.
+  - `base-core`: `15-pkg`, `15-pkg-latest`, `15.1-pkg`, … — on *this* repo the
+    `-pkg` suffix is the correct form.
+  - The `-quarterly` / `-latest` suffix selects the **pkg branch** baked in, not
+    the FreeBSD minor. If your runtime only exists in the latest branch, a
+    `…-latest` tag can save you the in-Containerfile `sed` (see the node
+    cookbook entry).
 - **Base version = LOWEST supported minor, not the build host's.** FreeBSD ABI compat is backward-only: a 15.0-userland image runs on 15.0 **and** 15.1 kernels, but a 15.1 image is **not** guaranteed on 15.0. So prefer the rolling major tag (`15`) over a pinned minor (`15.1`); only pin the minor if a 15.1-only feature is required (rare). Containers run on the host kernel, so this is a real runtime gate, not cosmetic.
 - License + CIT: a **service** → smallest health endpoint (`health`/`port` mode); a **CLI** → `command`-mode CIT running the command to completion (e.g. `<tool> --version`) and asserting exit 0 + an `expect_output` regex (a run-and-exit tool has no live process for `shell`/`port`/`health`/`screenshot`).
 
