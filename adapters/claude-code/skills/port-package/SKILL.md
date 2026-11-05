@@ -24,6 +24,7 @@ project's AI policy, which binds what you may submit.
 | "do not create harness tasks or to-do plans" | no TaskCreate, no TodoWrite. The phases ARE the plan |
 
 The hooks in `.claude/hooks/` enforce a subset of the operating rules in-session
-(generated-`Containerfile` edits, foreground builds, push before CIT, plus the
+(generated-`Containerfile*` edits, foreground builds, pushing an untested tree,
+`gh pr create`, plus the
 `JOURNAL.log` auto-journal). They are a convenience: `scripts/*.sh` and the git
 pre-push rail are the real gates and hold regardless.

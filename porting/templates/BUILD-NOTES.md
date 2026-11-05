@@ -3,9 +3,9 @@
 | | |
 |---|---|
 | **Upstream** | `<owner/repo>` @ `<tag>` (<license>) |
-| **Runtime** | `<node26 + temporal-polyfill / go / python3.11>` |
+| **Runtime** | `<pkg: <origin> / node26 + temporal-polyfill / go / python3.12>` |
 | **Database** | `<node:sqlite via sqlite-proxy / better-sqlite3 / stdlib sqlite3 / none>` |
-| **Base** | `base-exec:<tag>` (one process) / `base-rcd:<tag>` (several) / `base-core:<tag>` (CLI) — `base` (s6) is legacy. Use the lowest supported minor, e.g. `15` |
+| **Base** | `base-exec:<tag>` (one process) / `base-rcd:<tag>` (several) / `base-core:<tag>` (CLI) — `base` (s6) is legacy. `BASE_VERSION` per variant as set in `.daemonless/config.yaml` |
 
 ## FreeBSD-specific changes (and WHY)
 <!-- one line each; link the cookbook entry it came from -->
@@ -29,4 +29,4 @@
 
 ## Known limitations
 - `<e.g. remote DB mode unsupported — local file DB only>`
-- `<e.g. pinned to Python 3.11 until FreeBSD bug 285957 lands>`
+- `<e.g. builds from source because the FreeBSD port lags upstream by two majors>`

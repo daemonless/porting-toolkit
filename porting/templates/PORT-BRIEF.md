@@ -6,7 +6,8 @@ execution-discipline rules: trust these facts, re-verify only that the pinned
 tag is still the latest release, skip the research phase, start at Phase 2.
 
 ## Mission
-Build the FreeBSD daemonless image for **<upstream URL>** and open the PR.
+Build the FreeBSD daemonless image for **<upstream URL>**, push the branch, and
+leave the evidence for the human, who opens the PR.
 Nothing else: <explicitly fence out-of-scope work — deployment, proxy wiring,
 upstream feature requests>.
 
@@ -20,6 +21,9 @@ upstream feature requests>.
      branch name. -->
 - **Pin:** `<tag>` (latest release as of <date> — re-verify on the releases
   page before scaffolding).
+- **In FreeBSD ports?** <`origin` + version from `pkg rquery '%o|%n|%v' <app>`,
+  or "no". Packaged → pkg image, and most of the facts below shrink to the
+  package name.>
 - **License:** <license>.
 - **Layout:** <where package.json / go.mod / pyproject lives; monorepo notes>.
 - **Runtime:** <runtime + version, and how upstream's own Dockerfile runs it>.
@@ -31,8 +35,9 @@ upstream feature requests>.
 
 ## Crib (mandatory — do not tour the registry)
 - **Copy from `<nearest twin image>`:** `Containerfile.j2` structure,
-  `root/daemonless/custom.d/*` (base-exec) or `root/etc/services.d/<app>/run`
-  (legacy s6 base), `.daemonless/config.yaml` shape.
+  `root/daemonless/init.d/*` + `root/daemonless/libexec/<app>` (base-exec) or
+  `root/etc/services.d/<app>/run` (legacy s6 base), `.daemonless/config.yaml`
+  shape (variants and their `BASE_VERSION`).
 - <one line on what differs from the twin and must NOT be copied>.
 
 ## Functional probe (mandatory — proves it WORKS, not just boots)
@@ -45,7 +50,8 @@ upstream feature requests>.
 
 ## Decisions already made
 - **Base image:** <base-exec (one process) / base-rcd (several) / base-core
-  (CLI); NOT `base` unless matching an existing image. Tag per the ABI rule>.
+  (CLI); NOT `base` unless matching an existing image. `BASE_VERSION` per
+  variant, as the twin sets it; tag verified with `skopeo list-tags`>.
 - **Stays root?** <yes + why, e.g. binds a port <1024 → `ENV DAEMONLESS_USER=root`; else no>.
 - **CIT mode:** <health/port/command + `cit.ready:` line if the app's startup
   log matches no default pattern>.
@@ -57,6 +63,7 @@ upstream feature requests>.
 
 ## Definition of done
 Per `.porting/process.md`: clean `scripts/build.sh` + CIT pass + smoke test + guards +
-port-auditor CLEAN + BUILD-NOTES.md + PROCESS-LOG.md + lint-compose pass + PR
-(with provenance + viva sections) from a branch off upstream/main + any new
-cookbook entries appended. Then STOP for human review.
+port-auditor CLEAN + BUILD-NOTES.md + PROCESS-LOG.md + lint-compose pass +
+`dbuild lint` pass + the branch (off upstream/main) pushed to the fork + any new
+cookbook entries appended. Then STOP: the human writes the description and
+opens the PR.

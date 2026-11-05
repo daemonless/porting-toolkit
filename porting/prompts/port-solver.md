@@ -23,7 +23,7 @@ Method:
 Return:
 ```
 ROOT CAUSE: <one sentence>
-FIX: <exact Containerfile.j2 / patch / run-script change>
+FIX: <exact Containerfile*.j2 / patch / root/ script change>
 WHY IT WORKS: <one sentence>
 NEW COOKBOOK ENTRY: <signature → cause → fix → why>   # so the main agent appends it
 ```

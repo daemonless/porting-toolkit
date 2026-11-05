@@ -10,12 +10,14 @@
 # What lands where:
 #   .porting/            agent-neutral process, cookbook, prompts, templates
 #   scripts/             the gates: build.sh, cit-with-logs.sh, lint-compose.sh
-#   .git/hooks/pre-push  the CIT rail (agent-agnostic — holds for humans too)
+#   pre-push git hook    the CIT rail (agent-agnostic — holds for humans too)
+#   .git/info/exclude    ignore rules for the porting artifacts (not .gitignore)
 #   AGENTS.md            per-image agent entry point (first install only)
 #   <adapter>            optional per-agent in-session enforcement
 #
 # The cookbook is copied, not symlinked, so it works offline. After a port,
-# PR any new cookbook entries back to the toolkit repo.
+# PR any new cookbook entries back to the toolkit repo. --refresh never
+# discards local cookbook entries: a locally edited cookbook is backed up first.
 
 set -e
 
@@ -46,7 +48,11 @@ if [ "$AGENT" != none ] && [ ! -d "$TOOLKIT_DIR/adapters/$AGENT" ]; then
   exit 2
 fi
 
-if [ ! -d .git ]; then
+# .git is a directory in a normal clone and a file in a worktree; ask git.
+IN_GIT=false
+if git rev-parse --git-dir >/dev/null 2>&1; then
+  IN_GIT=true
+else
   echo "WARNING: not a git repo — installing anyway (the pre-push rail needs one)" >&2
 fi
 
@@ -58,8 +64,19 @@ echo "[toolkit] Agent:  $AGENT"
 # NOTE the /. on the source: "copy contents" portably. A bare trailing slash
 # only means contents under BSD cp; GNU cp (Linux) nests a subdir instead,
 # which silently dropped every hook on non-BSD installs (2026-07-04).
+# Porters append to .porting/cookbook.md. .cookbook.shipped is the copy as
+# installed; if the live cookbook differs from it, keep a backup before
+# overwriting so unshipped entries survive a refresh.
 mkdir -p .porting
+if [ -f .porting/cookbook.md ] && ! cmp -s .porting/cookbook.md .porting/.cookbook.shipped 2>/dev/null \
+   && ! cmp -s .porting/cookbook.md "$TOOLKIT_DIR/porting/cookbook.md"; then
+  backup=".porting/cookbook.local-$(date -u +%Y%m%dT%H%M%SZ).md"
+  cp .porting/cookbook.md "$backup"
+  echo "WARNING: .porting/cookbook.md had local changes — saved to $backup" >&2
+  echo "         Merge any new entries back into .porting/cookbook.md and PR them to the toolkit." >&2
+fi
 cp -R "$TOOLKIT_DIR/porting/." .porting/
+cp "$TOOLKIT_DIR/porting/cookbook.md" .porting/.cookbook.shipped
 echo "[toolkit] Installed .porting/ (process, cookbook, prompts, templates)"
 
 mkdir -p scripts
@@ -68,16 +85,18 @@ chmod +x scripts/*.sh
 echo "[toolkit] Installed scripts/ (build, cit-with-logs, lint-compose)"
 
 # ---- Git rails (hold no matter what drives the repo) ------------------------
-if [ -d .git ]; then
+if $IN_GIT; then
+  HOOKS_DIR=$(git rev-parse --git-path hooks)
+  mkdir -p "$HOOKS_DIR"
   if ! git rev-parse HEAD >/dev/null 2>&1; then
     echo "WARNING: repo has no commits yet — make an initial commit before starting a port" >&2
     echo "         (branch-off-upstream rules and the pre-push rail assume one)" >&2
   fi
-  if [ -f .git/hooks/pre-push ] && ! grep -q 'cit-passed' .git/hooks/pre-push 2>/dev/null; then
-    echo "WARNING: existing .git/hooks/pre-push left untouched — add the .cit-passed check to it manually" >&2
+  if [ -f "$HOOKS_DIR/pre-push" ] && ! grep -q 'cit-passed' "$HOOKS_DIR/pre-push" 2>/dev/null; then
+    echo "WARNING: existing $HOOKS_DIR/pre-push left untouched — add the .cit-passed check to it manually" >&2
   else
-    cp "$TOOLKIT_DIR/scripts/pre-push.git-hook" .git/hooks/pre-push
-    chmod +x .git/hooks/pre-push
+    cp "$TOOLKIT_DIR/scripts/pre-push.git-hook" "$HOOKS_DIR/pre-push"
+    chmod +x "$HOOKS_DIR/pre-push"
     echo "[toolkit] Installed git pre-push rail (blocks push without a CIT pass)"
   fi
 fi
@@ -113,42 +132,37 @@ case "$AGENT" in
 esac
 
 # ---- Keep the image repo pristine -------------------------------------------
-# A finished image repo is small and boring: .daemonless/, .github/,
-# Containerfile(+.j2), README.md, sbom.json, and (for a service) compose.yaml +
-# root/. No surveyed image repo ships scripts/, adapter config, or the porting
-# paperwork. See porting/shipped-files.md for the survey and the reasoning.
-if ! grep -qF 'porting-toolkit artifacts' .gitignore 2>/dev/null; then
+# A finished image repo ships the image, not the porting scaffolding; see
+# porting/shipped-files.md. The ignore rules go in the clone's own
+# .git/info/exclude so they never land in the image repo's .gitignore.
+if $IN_GIT; then
+  IGNORE_FILE=$(git rev-parse --git-path info/exclude)
+  mkdir -p "$(dirname "$IGNORE_FILE")"
+else
+  IGNORE_FILE=.gitignore
+fi
+if ! grep -qF 'porting-toolkit artifacts' "$IGNORE_FILE" 2>/dev/null; then
   {
     echo ""
     echo "# --- porting-toolkit artifacts (not part of the image) ---"
-    echo "# See .porting/shipped-files.md. Remove a line only if you mean to ship it."
-    echo "/scripts/"
-    echo "/.porting/"
-    echo "/.claude/"
-    echo "/CLAUDE.md"
-    echo "/AGENTS.md"
-    echo "/PORT-BRIEF.md"
-    echo "/PROCESS-LOG.md"
-    echo "/RUN-RECORD.md"
-    echo "/BUILD-NOTES.md"
-    echo "/WIP.md"
-    echo "/sbom-results/"
-    echo "JOURNAL.log"
-    echo "build.log"
-    echo "cit-output.log"
-    echo ".cit-passed"
-  } >> .gitignore
-  echo "[toolkit] Added the porting-artifact block to .gitignore"
+    echo "# See .porting/shipped-files.md."
+    for p in /scripts/ /.porting/ /.claude/ /CLAUDE.md /AGENTS.md /PORT-BRIEF.md \
+             /PROCESS-LOG.md /RUN-RECORD.md /BUILD-NOTES.md /WIP.md /sbom-results/ \
+             JOURNAL.log build.log cit-output.log .cit-passed; do
+      echo "$p"
+    done
+  } >> "$IGNORE_FILE"
+  echo "[toolkit] Added the porting-artifact ignore rules to $IGNORE_FILE"
 else
-  echo "[toolkit] .gitignore already has the porting-artifact block"
+  echo "[toolkit] $IGNORE_FILE already has the porting-artifact ignore rules"
 fi
 
-# If any of those are ALREADY tracked, .gitignore won't help — say so loudly.
-if [ -d .git ] && git rev-parse HEAD >/dev/null 2>&1; then
+# Ignore rules do not apply to files already tracked — say so loudly.
+if $IN_GIT && git rev-parse HEAD >/dev/null 2>&1; then
   tracked=$(git ls-files -- scripts .porting .claude CLAUDE.md AGENTS.md \
             PORT-BRIEF.md PROCESS-LOG.md RUN-RECORD.md BUILD-NOTES.md WIP.md 2>/dev/null | head -5)
   if [ -n "$tracked" ]; then
-    echo "WARNING: these porting artifacts are already TRACKED by git — .gitignore does not apply:" >&2
+    echo "WARNING: these porting artifacts are already TRACKED by git — ignore rules do not apply:" >&2
     echo "$tracked" | sed 's/^/           /' >&2
     echo "         git rm --cached them before opening a PR (see .porting/shipped-files.md)" >&2
   fi

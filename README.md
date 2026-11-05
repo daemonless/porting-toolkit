@@ -9,7 +9,7 @@ for it. Other agents are untested; see
 [`AGENTS.md`](AGENTS.md#which-agent).
 
 Start by reading the [Daemonless LLM / AI Contribution
-Policy](https://daemonless.io/guides/llm-policy/) and jump in the Discord if you
+Policy](https://github.com/daemonless/daemonless/blob/main/LLM_POLICY.md) and jump in the Discord if you
 have any questions. [`AGENTS.md`](AGENTS.md) explains what that policy means for
 a port; the short version is that the agent produces the evidence and the
 human writes the PR description.
@@ -43,8 +43,10 @@ human writes the PR description.
 ```
 
 This installs `.porting/` (process, cookbook, prompts, templates), `scripts/`
-(the gates), the `pre-push` git rail, and an `AGENTS.md` for the image. The
-cookbook is copied, not symlinked, so it works offline.
+(the gates), the `pre-push` git rail, and an `AGENTS.md` for the image. It
+adds ignore rules for all of it to `.git/info/exclude`, so nothing lands in the
+image repo's `.gitignore`. The cookbook is copied, not symlinked, so it works
+offline.
 
 ### Refresh an existing image repo
 
@@ -53,7 +55,9 @@ cookbook is copied, not symlinked, so it works offline.
 ```
 
 Overwrites `.porting/`, `scripts/` and the adapter with the latest toolkit
-versions. Leaves `AGENTS.md` and any local-only files alone.
+versions. If `.porting/cookbook.md` has local entries, it is first saved as
+`.porting/cookbook.local-<timestamp>.md`; merge those entries back and PR them
+here. Leaves `AGENTS.md` and any local-only files alone.
 
 ### Port a new app
 

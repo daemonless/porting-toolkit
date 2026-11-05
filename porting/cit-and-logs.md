@@ -12,19 +12,18 @@ Use the toolkit's `scripts/cit-with-logs.sh`:
 scripts/cit-with-logs.sh
 ```
 
-This wraps `dbuild test`, automatically captures full container logs during the health-timeout window, and writes them to `cit-output.log`. On failure, it prints the captured logs so you can see the real stack trace without a manual race.
+This wraps `dbuild test` on the default variant (`--variant <tag>` for another), follows the CIT container's logs until it exits, and writes them to `cit-output.log`. On failure, it prints the captured logs so you can see the real stack trace without a manual race. It sets `PAGER=cat` so dbuild's AppJail backend can't stall on a pager.
 
 ## Manual log capture (fallback)
 
 If the script isn't available, capture logs yourself during the ~120s window:
 ```sh
-# 1) start the test in the background
-dbuild --variant latest test >test.log 2>&1 &
+# 1) start the test in the background (variant tags: `dbuild detect`)
+PAGER=cat dbuild --variant <tag> test >test.log 2>&1 &
 
-# 2) within ~120s, find the cit container and dump its FULL logs
+# 2) find the cit container and FOLLOW its logs until it exits
 c=$(podman ps --format '{{.Names}}' | grep -i 'cit.*<image>' | head -1)
-until podman logs "$c" 2>&1 | grep -qiE "Migrations|Starting|Error|listening"; do sleep 2; done
-podman logs "$c" 2>&1 | grep -ivE "kevent\(\)"   # the real stack trace lives here
+podman logs -f "$c" 2>&1 | grep -ivE "kevent\(\)"   # the real stack trace lives here
 ```
 
 ## What CIT actually checks

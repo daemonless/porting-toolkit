@@ -15,7 +15,7 @@ If you are an agent reading this because someone pointed you at this repo:
 ## AI policy
 
 **Read the [Daemonless LLM / AI Contribution
-Policy](https://daemonless.io/guides/llm-policy/) before you generate anything
+Policy](https://github.com/daemonless/daemonless/blob/main/LLM_POLICY.md) before you generate anything
 destined for a pull request.** It is short, it applies to every repository in
 the Daemonless organization, and it is the authority here — this file only
 explains what it means for a port. This toolkit exists to make ports that
@@ -26,8 +26,8 @@ How each of its four requirements maps onto this toolkit:
 | Policy requirement | How this process meets it |
 |---|---|
 | **Understand what you are committing** — no blind copy-paste | [`port-auditor`](porting/prompts/port-auditor.md) walks every non-boilerplate line for provenance: it must trace to the port brief, a cookbook entry, or a logged error. An unexplainable line is a finding even when the build is green |
-| **Test it first** — untested AI output gets the PR closed | `scripts/build.sh` and `scripts/cit-with-logs.sh` are mandatory gates, and `.cit-passed` (which the pre-push rail checks) is only written when CIT **and** the functional smoke test both pass |
-| **Keep it clean** — no leftover artifacts or verbose comments | `JOURNAL.log`, `build.log`, `cit-output.log` and `.cit-passed` are gitignored by `install.sh`; the provenance walk removes speculative lines rather than documenting them |
+| **Test it first** — untested AI output gets the PR closed | `scripts/build.sh` and `scripts/cit-with-logs.sh` are mandatory gates. `.cit-passed` is only written when CIT **and** the functional smoke test both pass, and it records the tested git tree: the pre-push rail refuses any commit whose content differs |
+| **Keep it clean** — no leftover artifacts or verbose comments | `install.sh` ignores every porting artifact via `.git/info/exclude`, and `lint-compose.sh` fails if one is tracked; the provenance walk removes speculative lines rather than documenting them |
 | **Keep communication human** — no AI-generated text in issues, PR descriptions or review comments | [`porting/templates/PR-BODY.md`](porting/templates/PR-BODY.md) is an *outline of what to cover*, explicitly not prose to paste. The agent leaves evidence; the submitter writes the description, including the three **Viva** questions |
 
 Practical consequence for an agent running this process: **you do not open the
@@ -49,7 +49,7 @@ capabilities and names the substitution where an agent lacks one — see
 
 | Agent | Status |
 |---|---|
-| Claude Code | The only agent the process has been run with. An adapter ships. Even here the cold weak-model run is incomplete — see [`docs/testing-the-toolkit.md`](docs/testing-the-toolkit.md) |
+| Claude Code | The only agent the process has been run with. An adapter ships. One cold weak-model run has passed (rung 3, 2026-09-28); rungs 4 and 5 are untested — see [`docs/testing-the-toolkit.md`](docs/testing-the-toolkit.md) |
 | Anything else | **Untested.** The docs are written to be neutral and the gates are plain shell, but no one has yet completed a port with another agent |
 
 Treat "works with any agent" as the design intent, not a tested claim. If you
@@ -62,13 +62,13 @@ patch.
 | Gate | What it refuses |
 |---|---|
 | `scripts/build.sh` | a stale `Containerfile`; a build whose log contains failure signatures despite exit 0 |
-| `scripts/cit-with-logs.sh` | writing `.cit-passed` unless CIT **and** the functional smoke test both pass |
-| `scripts/lint-compose.sh` | a directory name that doesn't match the image name, metadata mismatches, unpinned upstream refs, unguarded patches, a toolchain in the runtime stage |
-| `.git/hooks/pre-push` | any push without a `.cit-passed` marker |
+| `scripts/cit-with-logs.sh` | writing `.cit-passed` unless CIT **and** an executable `scripts/smoke-test.sh` both pass |
+| `scripts/lint-compose.sh` | a directory name that doesn't match the image name, metadata mismatches, unpinned upstream refs, unguarded patches, a toolchain in the runtime stage, a tracked porting artifact |
+| pre-push git hook | any push whose commit tree differs from the tree recorded in `.cit-passed` |
 
 [`adapters/`](adapters/) adds *in-session* enforcement for agents that support
-it (for Claude Code: hooks that block foreground builds and edits to the
-generated `Containerfile`). Adapters are a convenience layer. If your agent has
+it (for Claude Code: hooks that block foreground builds, edits to any
+generated `Containerfile*`, and `gh pr create`). Adapters are a convenience layer. If your agent has
 no adapter, the gates above still hold, and the process is unchanged.
 
 To contribute an adapter, see [`CONTRIBUTING.md`](CONTRIBUTING.md#adding-an-agent-adapter).

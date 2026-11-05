@@ -1,8 +1,9 @@
 # RUN RECORD — `<image>`
 
 One per port. Cheap to fill, and the only way the project learns what a port
-actually costs rather than what it feels like. Commit it alongside
-`BUILD-NOTES.md` and `PROCESS-LOG.md`.
+actually costs rather than what it feels like. Like `BUILD-NOTES.md` and
+`PROCESS-LOG.md` it is **not committed** (see `.porting/shipped-files.md`);
+keep it with the port's other evidence.
 
 Numbers come from your agent's own usage report (Claude Code: `/cost`), from
 your own telemetry if you run any, and from `JOURNAL.log` for the timings and

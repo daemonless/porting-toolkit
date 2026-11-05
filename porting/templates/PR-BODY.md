@@ -1,7 +1,7 @@
 # PR description — outline for the SUBMITTER to write
 
 **This is a checklist of what to cover, not prose to paste.** The [Daemonless
-LLM / AI Contribution Policy](https://daemonless.io/guides/llm-policy/) does not
+LLM / AI Contribution Policy](https://github.com/daemonless/daemonless/blob/main/LLM_POLICY.md) does not
 allow AI-generated text in pull request descriptions. An agent must **not** fill
 this in and hand it over; it produces the evidence below, and the person opening
 the PR writes the description themselves from that evidence.

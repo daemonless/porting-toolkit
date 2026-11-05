@@ -1,13 +1,35 @@
 #!/bin/sh
-# git pre-push: refuse to push unless CIT has passed (.cit-passed marker written
-# by scripts/cit-with-logs.sh on success).
-# This is the agent-agnostic twin of an adapter's in-session CIT hook: it holds
-# no matter which agent — or human — drives the repo. Installed by install.sh.
+# git pre-push: refuse to push a commit whose tree is not the tree that passed
+# CIT + smoke test. scripts/cit-with-logs.sh records that tree in .cit-passed.
+# Agent-agnostic: holds for any agent, or a human. Installed by install.sh.
 
 top=$(git rev-parse --show-toplevel)
-if [ ! -f "$top/.cit-passed" ]; then
-  echo "push blocked: no .cit-passed marker — CIT has not passed since the last change." >&2
-  echo "Run scripts/cit-with-logs.sh (build + runtime test must be green) first." >&2
+marker="$top/.cit-passed"
+
+if [ ! -f "$marker" ]; then
+  echo "push blocked: no .cit-passed marker — CIT and the smoke test have not passed." >&2
+  echo "Run scripts/cit-with-logs.sh first." >&2
   exit 1
 fi
+
+tested=$(sed -n 's/^tree //p' "$marker")
+if [ -z "$tested" ]; then
+  echo "push blocked: .cit-passed has no tree hash (written by an older cit-with-logs.sh)." >&2
+  echo "Re-run scripts/cit-with-logs.sh." >&2
+  exit 1
+fi
+
+zero=0000000000000000000000000000000000000000
+# stdin: <local ref> <local sha> <remote ref> <remote sha>, one line per ref.
+while read -r _ local_sha _ _; do
+  case "$local_sha" in "$zero"|"") continue ;; esac   # branch deletion
+  pushed=$(git rev-parse "$local_sha^{tree}")
+  if [ "$pushed" != "$tested" ]; then
+    echo "push blocked: the pushed commit's content differs from what passed CIT." >&2
+    echo "  tested tree: $tested" >&2
+    echo "  pushed tree: $pushed ($local_sha)" >&2
+    echo "Commit exactly the tested state, or re-run scripts/cit-with-logs.sh on what you are pushing." >&2
+    exit 1
+  fi
+done
 exit 0

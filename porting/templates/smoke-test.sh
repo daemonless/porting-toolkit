@@ -3,9 +3,9 @@
 # CIT's health check only proves a process listens; this exercises the app's
 # actual purpose once, against the freshly built image. Copy to
 # scripts/smoke-test.sh, fill the PROBE section from PORT-BRIEF.md's
-# "Functional probe", and make it executable — cit-with-logs.sh runs it
-# automatically after dbuild test passes, and only writes .cit-passed if it
-# exits 0.
+# "Functional probe", and `chmod +x` it. cit-with-logs.sh runs it after
+# dbuild test passes, refuses to write .cit-passed without it, and passes the
+# image under test in SMOKE_IMAGE (the variant in SMOKE_VARIANT).
 #
 # Keep it to ONE meaningful assertion. If the app needs env to boot in
 # isolation (e.g. a dummy upstream URL), set it here — same values CIT uses.
@@ -13,7 +13,7 @@
 set -u
 
 IMAGE_NAME=$(basename "$(pwd)")
-IMAGE="ghcr.io/daemonless/${IMAGE_NAME}:build-latest"
+IMAGE="${SMOKE_IMAGE:?run via scripts/cit-with-logs.sh, or set SMOKE_IMAGE=<registry>/<image>:build-<variant>}"
 NAME="smoke-${IMAGE_NAME}"
 PORT="<app port, e.g. 3000>"
 
@@ -23,11 +23,9 @@ if [ "$(id -u)" -ne 0 ]; then
   elif command -v sudo >/dev/null 2>&1; then PODMAN="sudo podman"; fi
 fi
 
-# Two separate jobs, deliberately not one function. Clearing a stale container
-# must happen BEFORE the probe sets anything up; removing temp state must happen
-# only on exit. If you add a `mktemp -d` to cleanup() — as any probe needing a
-# mounted config file does — and it is also called up front, it deletes the
-# directory you are about to write into. Cost a failed run on blocky 2026-10-31.
+# Two jobs, kept apart: clear a stale container BEFORE setup, remove temp state
+# only on exit. Calling cleanup() up front would delete a `mktemp -d` directory
+# you are about to write into.
 rm_stale_container() { $PODMAN rm -f "$NAME" >/dev/null 2>&1; }
 cleanup() {
   rm_stale_container

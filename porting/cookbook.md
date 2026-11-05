@@ -13,19 +13,23 @@ verbatim — these fixes are build-verified; your variation of them is not.
 
 ### `pkg install nodeXX` → "No packages available" / not found
 **Cause:** the requested node (e.g. `node26`) is only in FreeBSD's **`latest`** pkg branch; the base image is on **`quarterly`**, which lags (tops out at e.g. node25).
-**Fix:** switch the branch before install, in **every** stage that installs it:
-```dockerfile
-RUN sed -i '' -e 's,/quarterly,/latest,' /etc/pkg/FreeBSD.conf && \
-    pkg update && pkg install -y node26 npm-node26 corepack ...
+**Fix:** build on a base tag that bakes in the `latest` branch — the fleet convention — instead of editing `/etc/pkg/FreeBSD.conf` in the Containerfile. Set it per variant in `.daemonless/config.yaml`:
+```yaml
+build:
+  variants:
+    - tag: latest
+      args:
+        BASE_VERSION: "15-latest"   # check the tag exists: skopeo list-tags
 ```
-**Why:** quarterly is a frozen snapshot; new major runtimes land in latest first. #1 cause of "package not found".
+with `ARG BASE_VERSION` feeding the `FROM` line of **every** stage that installs it.
+**Why:** quarterly is a frozen snapshot; new major runtimes land in latest first. #1 cause of "package not found". The base's `-latest` tags exist for exactly this, and a `sed` buried in the Containerfile is invisible in the variant list.
 
 ### Runtime crash: `ReferenceError: Temporal is not defined`
 **Cause:** FreeBSD's `node26` is compiled **without** the TC39 Temporal global. Official Node 26 ships it; on the FreeBSD build even `--harmony-temporal` is a no-op.
-**Fix:** add a polyfill dep and preload it (the s6 run script already uses `--import` for tsx):
+**Fix:** add a polyfill dep and preload it (in the launcher, or the s6 run script on legacy `base`):
 ```
 # inject dep:  p.dependencies['temporal-polyfill']='0.3.2'
-# run script:  NODE_FLAGS="--import temporal-polyfill/global"
+# launcher:    NODE_FLAGS="--import temporal-polyfill/global"
 ```
 **Why:** Temporal is gated behind a V8 build flag the FreeBSD port doesn't enable. (Worth a ports PR.)
 
@@ -65,11 +69,12 @@ Also drop any static import of a libsql *task/queue* driver — it eval-loads th
 ### `npm install -g` CLI fails as unprivileged user: `ocijail: error executing container command: No such file or directory`
 **Signature:** image runs (no hang), but the entrypoint immediately errors with `No such file or directory`, even though `/usr/local/bin/<tool>` exists. As `--user root` it works fine.
 **Cause:** npm run as root under the base image's restrictive umask installs the global tree **mode 700 / root-only** (`drwx------ /usr/local/lib/node_modules/@scope`). A container running as the unprivileged `bsd` user can't traverse into it to reach the bin — exec returns ENOENT.
-**Fix:** make the global modules world-readable/searchable after install, in a **late** layer so the expensive npm `RUN` stays cache-valid:
+**Fix:** make the global modules world-readable/searchable **in the same `RUN` as the install, in the builder stage** — then `COPY` the finished tree into the runtime stage, as the fleet does:
 ```dockerfile
-RUN chmod -R a+rX /usr/local/lib/node_modules
+RUN npm install -g <tool>@<version> && \
+    chmod -R a+rX /usr/local/lib/node_modules
 ```
-**Why:** `a+rX` adds read for all and search/execute on dirs (and already-exec files) only — exactly what an unprivileged `USER` needs to run a root-installed CLI.
+**Why:** `a+rX` adds read for all and search/execute on dirs (and already-exec files) only — exactly what an unprivileged `USER` needs to run a root-installed CLI. Don't do it in a separate late layer: a recursive `chmod` rewrites every file's metadata, so the layer stores a second full copy of the tree.
 
 ### node-gyp: `cc: not found` / `ar: not found` / missing headers
 **Cause:** the base jail ships no C toolchain and no `/usr/include`.
@@ -110,14 +115,14 @@ Then `yarn workspaces focus <ws> --production` **after** the build, to trim the 
 ### `pip install -r requirements.txt` fails building Rust/C deps
 **Cause:** compiled deps (pydantic-core, cryptography, orjson, watchfiles = Rust; pillow, argon2-cffi, uvloop, httptools = C) have **no FreeBSD wheels**; pip builds them from source (needs rust/cargo + C toolchain).
 **Fix:** install them prebuilt from `pkg` as `py3XX-*` and skip pip entirely (most FastAPI deps are packaged). No toolchain in the image.
-**Verify names first:** `pkg rquery '%v' <name>` — FreeBSD naming surprises: `py311-Jinja2` (capitalized), `py311-sqlalchemy20`, `py311-pydantic2` (the v2 pkg), `py311-pillow` (lowercase).
+**Verify names first:** `pkg rquery '%v' <name>` — FreeBSD naming surprises: `py312-Jinja2` (capitalised), `py312-sqlalchemy20`, `py312-pydantic2` (the v2 pkg), `py312-pillow` (lowercase). The prefix follows the branch's default Python (see below); never assume it.
 
 ### `fastapi run` not available
 `fastapi-cli` is usually not packaged. Run `python3.XX -m uvicorn <pkg.module>:app --host 0.0.0.0 --port <p>` (`py3XX-uvicorn` exists).
 
-### `SyntaxError: f-string expression part cannot include a backslash` (or other syntax errors)
-**Cause:** the app uses **Python 3.12+** syntax (PEP 701) but FreeBSD's **default Python is 3.11**, and FreeBSD packages the deps only for the default flavor (no `py312-*` yet — tracked by **FreeBSD bug 285957**).
-**Fix:** scope it with `python3.11 -m compileall <pkg>` (lists every syntax error). A few lines → patch them to 3.11-compatible forms (self-guarding patch that fails on drift). Pervasive → documented blocker until 285957 lands.
+### `SyntaxError` on newer Python syntax, or `py3XX-<dep>` not found
+**Cause:** FreeBSD packages Python deps only for the **default flavour** of each pkg branch. The ports default moved from 3.11 to **3.12** on 2026-06-24 (`Mk/bsd.default-versions.mk`), so the `latest` branch has `py312-*` (e.g. `py312-pydantic2`) and has dropped the `py311-*` builds; a `quarterly` branch cut earlier may still be on 3.11.
+**Fix:** check what the base's branch actually ships before writing a package name: `pkg rquery '%n-%v' 'py3*-pydantic2'`. Use that prefix and the matching `python3.XX`. If the app needs syntax newer than the branch's default, scope it with `python3.XX -m compileall <pkg>` (lists every syntax error): a few lines → a self-guarding patch that fails on drift; pervasive → a documented blocker.
 
 ### `uvicorn: Could not import module "X"`
 Masks the **real** import exception. Reproduce: `python3.XX -c "import X"` (as the runtime user) to get the true traceback (missing dep, permission, or syntax).
@@ -129,8 +134,8 @@ Cloned/COPY'd source often lands as `root:wheel 700`; the unprivileged runtime u
 
 ## General daemonless / dbuild patterns
 
-### Catalog metadata: set `x-daemonless: class:` — and where the config lives depends on it
-**Cause:** the daemonless catalog/README generator reads metadata from an `x-daemonless:` block, but *where* that block lives and which files an image ships depend on its **class**. dbuild's `VALID_IMAGE_CLASSES` = `service` | `cli` | `base` (default `service`). Easy to forget the field entirely, or to give a run-and-exit CLI a `compose.yaml` it should never have.
+### Catalogue metadata: set `x-daemonless: class:` — and where the config lives depends on it
+**Cause:** the daemonless catalogue/README generator reads metadata from an `x-daemonless:` block, but *where* that block lives and which files an image ships depend on its **class**. dbuild's `VALID_IMAGE_CLASSES` = `service` | `cli` | `base` | `part` (default `service`). Easy to forget the field entirely, or to give a run-and-exit CLI a `compose.yaml` it should never have.
 **Fix — pick the class, then follow its layout:**
 - **`service`** (persistent daemon, e.g. papra, sparky, trip): `x-daemonless:` block lives in **`compose.yaml`**; also ship `.daemonless/config.yaml` (`build:` variants + `cit:` screenshot/port/health) and a `.daemonless/baseline-*.png`. Set `class: "service"` explicitly even though it's the default.
 - **`cli`** (run-and-exit tool, e.g. immich-cli): **no `compose.yaml`**. Put everything in `.daemonless/config.yaml`:
@@ -146,8 +151,9 @@ Cloned/COPY'd source often lands as `root:wheel 700`; the unprivileged runtime u
     expect_output: '\d+\.\d+\.\d+'   # keep generic, don't pin the exact version
   ```
 - **`base`** (image for `FROM`): no deployment docs.
-**Also:** `category:` must be one of dbuild's `VALID_CATEGORIES` (Base, Databases, Development, Downloaders, Infrastructure, Media Management, Media Servers, Monitoring, Network, Photos & Media, Productivity, Security, Utilities). `"Apps"` is **not** valid and won't slot into the catalog.
-**Why:** the catalog and README layout branch on `class`; a CLI rendered as a service (or vice-versa) generates wrong deployment docs. Schema source of truth: `dbuild/dbuild/config.py` (`Metadata`, `VALID_IMAGE_CLASSES`, `VALID_CATEGORIES`).
+- **`part`** (one piece of a stack, installed by the stack — e.g. `immich-server`): no deployment docs, and catalogues leave it out.
+**Also:** `category:` must be one of dbuild's `VALID_CATEGORIES` (Base, Databases, Development, Downloaders, Infrastructure, Media Management, Media Servers, Monitoring, Network, Photos & Media, Productivity, Security, Utilities). `"Apps"` is **not** valid and won't slot into the catalogue.
+**Why:** the catalogue and README layout branch on `class`; a CLI rendered as a service (or vice-versa) generates wrong deployment docs. Schema source of truth: `dbuild/dbuild/config.py` (`Metadata`, `VALID_IMAGE_CLASSES`, `VALID_CATEGORIES`).
 
 ### Generated files carry the wrong image name (`ghcr.io/daemonless/<app>-daemonless`, `…-fork`, `…-port`)
 **Signature:** after `dbuild generate`, the README, the registry refs in `compose.yaml` and the built image tag all use a name you never typed — usually your checkout's directory name, e.g. `papra-daemonless` instead of `papra`. Nothing errors; the build is green and the artefacts are all subtly wrong.
@@ -155,7 +161,7 @@ Cloned/COPY'd source often lands as `root:wheel 700`; the unprivileged runtime u
 **Fix:** rename the checkout to exactly the target image name, then regenerate:
 ```sh
 cd .. && mv papra-daemonless papra && cd papra
-dbuild generate --registry ghcr.io/daemonless
+DBUILD_REGISTRY=ghcr.io/daemonless dbuild generate
 ```
 If the upstream-app directory already owns the name, nest them — `~/src/upstream/papra` and `~/src/images/papra` — rather than suffixing the image repo.
 **Catch it early:** `scripts/lint-compose.sh` compares the directory name against the `ghcr.io/daemonless/*` refs in `compose.yaml` and fails on a mismatch. For a `cli`-class image there is no `compose.yaml`, so check the directory name by eye before the first `dbuild generate`.
@@ -163,12 +169,10 @@ If the upstream-app directory already owns the name, nest them — `~/src/upstre
 
 ### `base:15-pkg` → `manifest unknown` (and other invented base tags)
 **Signature:** `dbuild build` or `podman pull` fails on the `FROM` line with `reading manifest <tag> in ghcr.io/daemonless/base: manifest unknown`. Or worse: docs and `BUILD-NOTES.md` name a tag the image was never actually built against, and nobody notices because the build used a different one.
-**Cause:** `base` and `base-core` **do not share a tag scheme**, and it is easy to carry a tag across from the wrong one (or from a doc).
-- `ghcr.io/daemonless/base`: `15`, `15.1`, `15-quarterly`, `15-latest`, `15.1-latest` (+ `-amd64`/`-aarch64`, `-dlN`). **No `-pkg` variant exists.**
-- `ghcr.io/daemonless/base-core`: `15-pkg`, `15-pkg-latest`, `15.1-pkg`, `15.1-pkg-latest`, … — here `-pkg` *is* correct.
+**Cause:** the base repos (`base`, `base-exec`, `base-rcd`, `base-core`) **do not share a tag scheme** — e.g. `base` has no `-pkg` tags while `base-core` uses them — and it is easy to carry a tag across from the wrong one, or from a doc. Any list of tags written down goes stale; don't trust one, including in this file's history.
 **Fix:** list the tags before writing one down, and again before you record it in `BUILD-NOTES.md`:
 ```sh
-skopeo list-tags docker://ghcr.io/daemonless/base | jq -r '.Tags[]' | grep -v -- '-dl'
+skopeo list-tags docker://ghcr.io/daemonless/<base-repo> | jq -r '.Tags[]' | grep -v -- '-dl'
 ```
 **Why:** the `-quarterly`/`-latest` suffix selects the **pkg branch** baked into the image, not the FreeBSD minor — so the two repos' suffixes mean different things and neither is guessable. (Found 2026-09-28: a port brief and the process doc both said `base:15-pkg`; the image actually built against `base:15`, and the notes initially claimed the tag that does not exist.)
 
@@ -197,14 +201,14 @@ Note the COPY-source path may differ from the `-p1` path (e.g. upstream `backend
 ### `dbuild build` "succeeded" but the image is broken
 Read the inner build log, not the wrapper exit code. Grep `error:` / `Failed` / `gyp ERR`.
 
-### `dbuild generate` rewrote README.md (+ Containerfile) with the wrong registry org (your fork instead of `ghcr.io/daemonless`)
+### `dbuild generate` wrote README.md (+ Containerfile) with the wrong registry org (your fork instead of `ghcr.io/daemonless`)
 **Cause:** `dbuild` auto-derives the registry org from `git remote get-url origin` (`config.py:_detect_registry`). When you run from a fork, origin is your own account, so generated docs/image refs point at your fork's org instead of `ghcr.io/daemonless`.
 **Fix:** force the upstream registry when generating from a fork:
 ```sh
-dbuild generate --registry ghcr.io/daemonless      # or: export DBUILD_REGISTRY=ghcr.io/daemonless
+DBUILD_REGISTRY=ghcr.io/daemonless dbuild generate
 ```
-Precedence: `--registry` / `DBUILD_REGISTRY` env → org from `origin` → fallback `ghcr.io/daemonless`.
-Then restore any stray `README.md` to upstream before committing — only `Containerfile` + `.j2` + `patches/` belong in the PR.
+Precedence: the top-level `dbuild --registry <r> …` flag / `DBUILD_REGISTRY` env → org from `origin` → fallback `ghcr.io/daemonless`.
+`README.md` is generated **and shipped**, so don't restore it — regenerate it with the daemonless registry and commit the result. Check: `grep -rhoE 'ghcr\.io/[a-z0-9.-]+/' README.md Containerfile* compose.yaml | sort -u` prints only `ghcr.io/daemonless/`.
 
 ### Build hangs for 10+ min AFTER the `RUN` finishes — `storage-applyLayer` pegged at 100% CPU
 **Signature:** the last build output is the end of a `RUN` (e.g. `pkg clean` done), then minutes of silence; `ps` shows `storage-applyLayer .../zfs/graph/<hash> (podman)` in **R** state burning CPU, `podman ps` goes sluggish.
@@ -237,7 +241,7 @@ Then restore any stray `README.md` to upstream before committing — only `Conta
 cit:
   ready: "Server started on port"   # the literal line the app logs when up
 ```
-(or have the s6 `run` script echo a line containing `listening on`).
+(or have the launcher echo a line containing `listening on`).
 **Why:** the ready gate is log-regex-based; an unmatched pattern silently degrades to a fixed sleep on every test run.
 
 ### Container gets `UND_ERR_CONNECT_TIMEOUT` reaching the host or a sibling container
@@ -313,8 +317,10 @@ call site — it reads like an oversight otherwise, and it is the one thing a
 reviewer will stop on.
 **Why:** there are three alternatives, not two, and you should reject all three
 explicitly or a reviewer will think you rejected straw men:
-`net.inet.ip.portrange.reservedlow=0` is a per-jail sysctl that unreserves
-*every* low port in the jail; `mac_portacl` needs a kernel module loaded on the
+`net.inet.ip.portrange.reservedhigh=0` is a per-jail sysctl that unreserves
+*every* low port in the jail (ports from `reservedlow` to `reservedhigh` are
+root-only; `reservedlow` defaults to 0, so `reservedhigh` is the one that
+matters); `mac_portacl` needs a kernel module loaded on the
 **host** plus a policy keyed to a uid inside the container, which is host state
 an image cannot carry — it breaks the property that the image is self-contained.
 **The third is the one that actually works and is upstream's own suggestion:
@@ -356,38 +362,40 @@ is NOT the s6 layout — `/etc/services.d` and `/etc/cont-init.d` simply do not
 exist there, and writing to them is silently ignored.
 **Fix:** the four-part move, verified on blocky:
 ```
-FROM ghcr.io/daemonless/base-exec:15          # was base:15
-root/etc/services.d/<app>/run   →  CMD ["<app>"]            in the Containerfile
-root/etc/cont-init.d/NN-foo     →  root/daemonless/custom.d/NN-foo
+FROM ghcr.io/daemonless/base-exec:${BASE_VERSION}   # was base:${BASE_VERSION}
+root/etc/services.d/<app>/run   →  root/daemonless/libexec/<app>  (sets env, then exec)
+                                   + CMD ["/daemonless/libexec/<app>"]
+root/etc/cont-init.d/NN-foo     →  root/daemonless/init.d/NN-foo   (NN > 10)
 (stay root?)                    →  ENV DAEMONLESS_USER=root
 ```
-`root/healthz` is unchanged and still overrides the base's generic one.
+`root/healthz` is unchanged and still overrides the base's generic one. Drop
+`s6-setuidgid` from the old run script: `/init` already drops to
+`DAEMONLESS_USER` via `dsu` before it execs `CMD`. Copy a sibling's layout
+(`navidrome`, `radarr`) rather than inventing one.
 **Why, and the two traps:**
-1. **No supervisor.** `/init` runs `init.d/*`, then `custom.d/*`, then **execs
-   `CMD`** — the app replaces `/init`, gets the runtime's signals, and its exit
+1. **No supervisor.** `/init` runs `init.d/*` (the base's, then yours, in
+   lexical order), then `custom.d/*`, then **execs `CMD`** — the app replaces `/init`, gets the runtime's signals, and its exit
    is the container's. Restart is the runtime's job, so set
    `restart: unless-stopped` in `compose.yaml`. If you actually need in-container
    supervision of 2+ services, that is `base-rcd` (`rcd(8)` units in
    `/usr/local/etc/rcd.d`), not `base-exec`.
-2. **`init.d` runs entirely before `custom.d`**, and `init.d/10-usermod` chowns
-   `/config` to PUID:PGID. So any file your `custom.d` script CREATES under
-   `/config` stays root-owned, and CIT fails with
+2. **Init scripts run as root**, after the base's `init.d/10-usermod` has
+   chowned `/config` to PUID:PGID. So any file your `init.d` script CREATES
+   under `/config` is root-owned, and CIT fails with
    `ownership (PUID=1000): paths under /config not owned by 1000:1000`. Chown it
    yourself (`chown bsd:bsd "$f"` — `bsd` is already remapped to PUID:PGID),
-   guarded by `[ "$(id -u)" = 0 ]` so a `--user` run skips it. Under s6 both
-   scripts shared `/etc/cont-init.d` and the seed merely sorted before
-   `10-usermod`, so this worked by accident and the accident does not survive
-   the move.
+   guarded by `[ "$(id -u)" = 0 ]` so a `--user` run skips it.
 
-### `dbuild init`'s scaffold is cloudflared-flavoured — delete it, don't edit it
-**Cause:** the generated `root/etc/services.d/<app>/run` and `root/healthz` branch
-on `TUNNEL_TOKEN` and fall back to a "CIT mock mode" that runs
-`nc -lk 0.0.0.0 <port>`; the generated `Containerfile.j2` carries
-`DOWNLOAD_URL=https://example.com/...`, `licenses="UNKNOWN"`, a guessed
-`web_url`, and a `freshports_url` with a guessed category path.
-**Fix:** treat all of it as placeholder. Replace the run script and healthz
-outright rather than editing around the token check.
-**Why:** the mock mode is the dangerous part. Left in place it satisfies CIT's
-port check with a netcat listener instead of the application, so CIT passes
-forever while the image is broken — the same anti-pattern as a baseline
-screenshot of an error dialog.
+### `dbuild init`'s scaffold is legacy-shaped — replace it, don't edit around it
+**Cause:** `dbuild init` still scaffolds the s6 layout on `base`:
+`FROM ghcr.io/daemonless/base:${BASE_VERSION}`,
+`root/etc/services.d/<app>/run` (with `s6-setuidgid`), and a generic
+`root/healthz`. The source template (`Containerfile.j2`) carries a placeholder
+`DOWNLOAD_URL="https://example.com/<app>-${APP_VERSION}.tar.gz"`.
+**Fix:** treat it as a starting point for metadata only. For a new image, move
+to `base-exec` with an `init.d` + `libexec` layout (see "Porting an image off
+s6" above), and replace the `example.com` URL with the real pinned release
+asset — or delete the source template entirely if the image is pkg-only.
+**Why:** a placeholder URL fails loudly at build time, which is fine; the
+s6 layout is the quiet trap, because on `base-exec` `/etc/services.d` is
+silently ignored: the container boots, runs no app, and `/init` sleeps.

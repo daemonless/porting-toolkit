@@ -1,6 +1,7 @@
 #!/bin/sh
 # The ONLY sanctioned way to build. Wraps `dbuild build` with:
-#   - a staleness gate: refuses to run if Containerfile.j2 is newer than Containerfile
+#   - a staleness gate: refuses to run if any generated file (Containerfile,
+#     Containerfile.pkg, ..., README.md) is out of date with its .j2 template
 #     (edit .j2 → `dbuild generate` → build; never build a stale Containerfile)
 #   - full log capture to build.log
 #   - real-error detection: dbuild's wrapper can exit 0 while the inner build failed,
@@ -9,17 +10,30 @@
 # MUST run in the background — detached, nohup, another terminal, or your agent's
 # background-execution mode (Claude Code: `run_in_background: true`). A cold
 # FreeBSD build (pkg install + npm ci + compile + ZFS layer commits) routinely
-# outlives the foreground tool timeout, which SIGKILLs it (exit 137) and can kill
-# the whole session (2026-07-04). Some adapters hook-block
-# foreground invocations.
+# outlives the foreground tool timeout, which SIGKILLs it (exit 137) and can end
+# the session. Some adapters hook-block foreground invocations.
 #
 # Usage: scripts/build.sh [dbuild build args, e.g. --variant TAG]
 
 LOG="build.log"
 
-if [ -f Containerfile.j2 ] && [ -f Containerfile ] && [ Containerfile.j2 -nt Containerfile ]; then
-  echo "ERROR: Containerfile.j2 is newer than Containerfile — run \`dbuild generate\` first." >&2
-  exit 1
+# Prefer dbuild's content check; fall back to mtimes on a dbuild without it.
+# The README is checked against the daemonless registry, which is what ships,
+# even when run from a fork.
+if dbuild generate --help 2>/dev/null | grep -q -- '--check'; then
+  if ! DBUILD_REGISTRY="${DBUILD_REGISTRY:-ghcr.io/daemonless}" dbuild generate --check >&2; then
+    echo "ERROR: generated files are stale — run \`DBUILD_REGISTRY=ghcr.io/daemonless dbuild generate\` first." >&2
+    exit 1
+  fi
+else
+  for tpl in Containerfile.j2 Containerfile.*.j2; do
+    [ -f "$tpl" ] || continue
+    out="${tpl%.j2}"
+    if [ ! -f "$out" ] || [ "$tpl" -nt "$out" ]; then
+      echo "ERROR: $tpl is newer than $out (or $out is missing) — run \`dbuild generate\` first." >&2
+      exit 1
+    fi
+  done
 fi
 
 echo "[build] dbuild build $* > $LOG"

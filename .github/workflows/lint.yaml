@@ -1,0 +1,22 @@
+name: lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: sh -n
+        run: |
+          for f in install.sh scripts/*.sh scripts/pre-push.git-hook \
+                   porting/templates/smoke-test.sh adapters/*/hooks/*.sh; do
+            sh -n "$f" || { echo "syntax error: $f"; exit 1; }
+          done
+      - name: shellcheck
+        run: |
+          shellcheck -s sh install.sh scripts/*.sh scripts/pre-push.git-hook \
+            porting/templates/smoke-test.sh adapters/*/hooks/*.sh

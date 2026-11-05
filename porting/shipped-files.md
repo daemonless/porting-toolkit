@@ -16,15 +16,15 @@ Derived from the tracked contents of 16 daemonless image repos (2026-09-28):
 |---|---|---|
 | `.daemonless/` | 16/16 | `dbuild init`, then `dbuild logo` / `dbuild screenshot` / `dbuild baseline`. Holds `config.yaml`, `logo.svg`, `screenshots/`, `baseline-*.png` |
 | `.github/` | 16/16 | **`dbuild init`** (`init.py`, `github-workflow.yaml` template). Easy to lose if you scaffold by copying a sibling instead — check it exists |
-| `README.md` | 16/16 | **`dbuild generate`** — never hand-edit |
+| `README.md` | 16/16 | **`dbuild generate`** — never hand-edit; generate with `DBUILD_REGISTRY=ghcr.io/daemonless` and commit it with the change that altered it |
 | `sbom.json` | 16/16 | **generated and committed by CI** (`github-actions[bot]`, "Update sbom.json and generated files [skip ci]"), after the first build on `main`. **Do not hand-add it to a PR** — it will not exist in a new image repo until CI has run once. `dbuild sbom` exists for local inspection, writes to `sbom-results/`, and produces a different (single-variant) shape than the committed aggregate |
 | `Containerfile` + `Containerfile.j2` | 16/16 | you write the `.j2`; `dbuild generate` writes the rest. Some repos ship `Containerfile.pkg` + `.pkg.j2` instead of, or as well as, the plain pair |
 | `compose.yaml` | 15/16 | you write it. **Service class only** — a `cli`-class image ships none (`immich-cli`); see the cookbook's `x-daemonless: class:` entry |
-| `root/` | 15/16 | you write it. On **base-exec**: `daemonless/custom.d/<NN>-name` for setup, `healthz`; the app is `CMD`, not a run script. On legacy **base** (s6): `etc/services.d/<app>/run`, `etc/cont-init.d/*`, `healthz`. CLI images have none |
+| `root/` | 15/16 | you write it. On **base-exec**: `daemonless/init.d/<NN>-name` for setup, `daemonless/libexec/<app>` as the launcher `CMD` runs, `healthz`. On legacy **base** (s6): `etc/services.d/<app>/run`, `etc/cont-init.d/*`, `healthz`. CLI images have none |
 | `LICENSE` | 12/16 | you add it — the **image repo's** licence (BSD-2-Clause, matching the org), not upstream's |
 | `patches/` | 3/16 | only when the port patches or shims upstream source |
 | app-specific config | rare | e.g. `example.env`, `postgres-template.conf` — only when the app genuinely needs a shipped sample |
-| `.gitignore` | ~6/16 | `install.sh` writes one; fine to ship |
+| `.gitignore` | ~6/16 | only if the image itself needs one. `install.sh` puts its ignore rules in `.git/info/exclude`, not here |
 
 ## Never committed — porting-time only
 
@@ -38,11 +38,11 @@ produced, not part of the image.
 | `.claude/`, `CLAUDE.md`, and any other adapter files | agent integration | one agent's config has no place in a shared image repo |
 | `AGENTS.md` | per-image agent entry point | same reason; regenerate it with `install.sh` when you next work on the repo |
 | `PORT-BRIEF.md` | the Phase 0/1 plan | an input to the port |
-| `PROCESS-LOG.md`, `RUN-RECORD.md` | what happened, what it cost | evidence you write the PR description **from** — attach or quote them, don't commit them |
-| `BUILD-NOTES.md` | the rationale a reviewer reads | 1/16 ships it (`immich-public-proxy`, and that is an outlier worth cleaning up, not a precedent). Put its content in the PR description |
-| `JOURNAL.log`, `build.log`, `cit-output.log`, `.cit-passed`, `WIP.md` | session artefacts | already gitignored by `install.sh` |
+| `PROCESS-LOG.md`, `RUN-RECORD.md` | what happened, what it cost | evidence the submitter writes the PR description **from**; don't commit them |
+| `BUILD-NOTES.md` | the rationale behind each FreeBSD-specific change | 1/16 ships it (`immich-public-proxy`, an outlier, not a precedent). The submitter reads it and writes the PR description **in their own words** — don't paste it in, because the AI policy forbids AI-generated text in PR descriptions |
+| `JOURNAL.log`, `build.log`, `cit-output.log`, `.cit-passed`, `WIP.md` | session artefacts | already ignored by `install.sh` |
 
-`install.sh` writes all of the above into `.gitignore`, so the default is safe.
+`install.sh` writes all of the above into the clone's `.git/info/exclude`, so the default is safe and the image repo's `.gitignore` is untouched.
 `scripts/lint-compose.sh` fails if any of them is actually **tracked**, which
 catches the case where someone `git add -f`'d one or installed the toolkit into
 a repo that already tracked a colliding path.
@@ -52,8 +52,9 @@ a repo that already tracked a colliding path.
 Then it isn't a porting script, and it doesn't go in `scripts/`:
 
 - **Runs in the container at runtime** → `root/`. That is what `root/` is for.
-  On **base-exec**: `root/daemonless/custom.d/<NN>-name` for one-shot setup, and
-  the service itself is the Containerfile's `CMD` (no run script). On legacy
+  On **base-exec**: `root/daemonless/init.d/<NN>-name` for one-shot setup, and
+  `root/daemonless/libexec/<app>` as the launcher the Containerfile's `CMD`
+  runs (it sets the environment and `exec`s the app). On legacy
   **base** (s6): `root/etc/services.d/<app>/run` and `root/etc/cont-init.d/`.
   Either way `root/healthz` is the external health probe — set
   `io.daemonless.healthcheck-url` so something can find it.

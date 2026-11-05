@@ -25,7 +25,7 @@ For each file in `patches/`:
 3. If a patch no longer applies:
    - Check if the upstream fix makes the patch unnecessary (drop it)
    - Or update the patch for the new code
-   - Document in the PR what changed
+   - Record what changed in `PROCESS-LOG.md`, for the human writing the PR description
 
 ## Phase 3 — Check for new native deps
 1. Diff the upstream dependency file (package.json, requirements.txt, go.mod) between old and new tag.
@@ -33,9 +33,9 @@ For each file in `patches/`:
 3. Flag any new blockers before building.
 
 ## Phase 4 — Update + build + CIT
-1. Update the `ARG <APP>_VERSION` in `Containerfile.j2`.
-2. `dbuild generate && dbuild build` — verify real success (grep for errors).
-3. `scripts/cit-with-logs.sh` (or `dbuild test`) — verify runtime works.
+1. Update the `ARG <APP>_VERSION` in `Containerfile.j2` (a pkg image has no pin: the version comes from the package, so a bump is a rebuild).
+2. `DBUILD_REGISTRY=ghcr.io/daemonless dbuild generate`, then `scripts/build.sh` in the background — read its PASS/FAIL verdict.
+3. `scripts/cit-with-logs.sh` — CIT plus the smoke test; only this writes `.cit-passed`.
 4. If Python: run `python3.XX -m compileall` to check for new syntax incompatibilities.
 
 ## Phase 5 — PR

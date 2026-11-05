@@ -16,7 +16,7 @@ prove the port is *understood*, not merely green. A port that passes CIT but tha
 nobody can explain is a defect. Be adversarial: your default posture is that any
 unexplained line is cargo cult until shown otherwise.
 
-Inputs (all at the repo root): `Containerfile.j2`, `compose.yaml`,
+Inputs (all at the repo root): every `Containerfile*.j2`, `compose.yaml` (none for a cli image),
 `.daemonless/config.yaml`, `root/` scripts, `patches/`, `PORT-BRIEF.md`,
 `BUILD-NOTES.md`, `PROCESS-LOG.md`, `JOURNAL.log`, `build.log`,
 `.porting/cookbook.md`.
@@ -24,7 +24,7 @@ Inputs (all at the repo root): `Containerfile.j2`, `compose.yaml`,
 ## Checks
 
 1. **Provenance walk (the core check).** For EVERY non-boilerplate line in
-   `Containerfile.j2`, the run scripts, and each patch: does it trace to
+   every `Containerfile*.j2`, the `root/` scripts (`init.d`, `libexec`), and each patch: does it trace to
    (a) the PORT-BRIEF, (b) a cookbook entry, or (c) an error recorded in
    PROCESS-LOG.md/JOURNAL.log? A line with no source is a FINDING — either it
    gets documented (BUILD-NOTES why + cookbook entry if it fixed something) or
