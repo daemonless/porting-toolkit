@@ -29,7 +29,7 @@ else
   for tpl in Containerfile.j2 Containerfile.*.j2; do
     [ -f "$tpl" ] || continue
     out="${tpl%.j2}"
-    if [ ! -f "$out" ] || [ "$tpl" -nt "$out" ]; then
+    if [ ! -f "$out" ] || [ -n "$(find "$tpl" -newer "$out")" ]; then
       echo "ERROR: $tpl is newer than $out (or $out is missing) — run \`dbuild generate\` first." >&2
       exit 1
     fi

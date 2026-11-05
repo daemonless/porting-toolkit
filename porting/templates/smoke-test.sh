@@ -27,6 +27,8 @@ fi
 # only on exit. Calling cleanup() up front would delete a `mktemp -d` directory
 # you are about to write into.
 rm_stale_container() { $PODMAN rm -f "$NAME" >/dev/null 2>&1; }
+# cleanup is called via trap, which shellcheck cannot see.
+# shellcheck disable=SC2317
 cleanup() {
   rm_stale_container
   # rm -rf "$WORKDIR"   # uncomment if you add temp state

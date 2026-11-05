@@ -122,6 +122,8 @@ for CF in $CONTAINERFILES; do
     warn "$CF healthcheck: root/healthz is shipped but no io.daemonless.healthcheck-url LABEL points at it"
   fi
   # Only a literal label is comparable; dbuild leaves ${ARG} references unexpanded.
+  # '${' is a literal here: it matches unexpanded ARG references.
+  # shellcheck disable=SC2016
   case "$label_health" in
     ''|*'${'*) : ;;
     *)
@@ -186,7 +188,7 @@ if git rev-parse --git-dir >/dev/null 2>&1; then
 fi
 
 if [ "$ERRORS" -eq 0 ]; then
-  echo "lint-compose: all checks passed ($(echo $CONTAINERFILES))"
+  echo "lint-compose: all checks passed (${CONTAINERFILES# })"
   exit 0
 else
   echo "lint-compose: $ERRORS mismatch(es) found" >&2

@@ -43,7 +43,11 @@ if [ "$TOOLKIT_DIR" = "$TARGET_DIR" ]; then
 fi
 
 if [ "$AGENT" != none ] && [ ! -d "$TOOLKIT_DIR/adapters/$AGENT" ]; then
-  echo "ERROR: no adapter '$AGENT'. Available: $(ls "$TOOLKIT_DIR/adapters" | tr '\n' ' ')" >&2
+  available=""
+  for d in "$TOOLKIT_DIR"/adapters/*/; do
+    [ -d "$d" ] && available="$available $(basename "$d")"
+  done
+  echo "ERROR: no adapter '$AGENT'. Available:${available:- none}" >&2
   echo "       Use --agent none to install the neutral files and git rails only." >&2
   exit 2
 fi
